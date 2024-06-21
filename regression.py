@@ -8,7 +8,8 @@ from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from scipy.stats import t, ttest_rel, chi2
+from scipy.stats import t, ttest_rel, chi2, shapiro
+from sklearn.utils import resample
 
 # Load data
 file_path = 'HR_data.csv'
@@ -92,27 +93,50 @@ for fold, (train_index, test_index) in enumerate(outer_cv.split(X, y, groups), s
     print(f"    Random Forest Test MSE: {rf_best_mse:.4f}")
 
 # Calculate and print summary stats
-def calculate_summary_stats(metrics):
+def calculate_summary_stats(metrics, method='parametric'):
     mean_val = np.mean(metrics)
     std_val = np.std(metrics, ddof=1)
     n = len(metrics)
     confidence = 0.95
 
-    # Confidence interval for the mean using the t-distribution
-    mean_h = std_val * t.ppf((1 + confidence) / 2, n - 1) / (n ** 0.5)
+    if method == 'parametric':
+        # Confidence interval for the mean using the t-distribution
+        mean_h = std_val * t.ppf((1 + confidence) / 2, n - 1) / (n ** 0.5)
 
-    # Confidence interval for the standard deviation using the chi-squared distribution
-    alpha = 1 - confidence
-    chi2_lower = chi2.ppf(alpha / 2, n - 1)
-    chi2_upper = chi2.ppf(1 - alpha / 2, n - 1)
-    std_lower = np.sqrt((n - 1) * std_val ** 2 / chi2_upper)
-    std_upper = np.sqrt((n - 1) * std_val ** 2 / chi2_lower)
-    std_h = (std_upper - std_lower) / 2  # Half-width of the confidence interval
+        # Confidence interval for the standard deviation using the chi-squared distribution
+        alpha = 1 - confidence
+        chi2_lower = chi2.ppf(alpha / 2, n - 1)
+        chi2_upper = chi2.ppf(1 - alpha / 2, n - 1)
+        std_lower = np.sqrt((n - 1) * std_val ** 2 / chi2_upper)
+        std_upper = np.sqrt((n - 1) * std_val ** 2 / chi2_lower)
+        std_h = (std_upper - std_lower) / 2  # Half-width of the confidence interval
+
+    elif method == 'bootstrap':
+        # Bootstrap confidence intervals
+        bootstrap_means = []
+        bootstrap_stds = []
+        for _ in range(1000):
+            sample = resample(metrics, replace=True, n_samples=n)
+            bootstrap_means.append(np.mean(sample))
+            bootstrap_stds.append(np.std(sample, ddof=1))
+        mean_h = np.percentile(bootstrap_means, 97.5) - np.percentile(bootstrap_means, 2.5)
+        std_h = np.percentile(bootstrap_stds, 97.5) - np.percentile(bootstrap_stds, 2.5)
 
     return mean_val, mean_h, std_val, std_h
 
+# Normality check
 for model_name, mses in results.items():
-    mean_mse, mean_h, std_mse, std_h = calculate_summary_stats(mses)
+    stat, p = shapiro(mses)
+    print(f"\nNormality test for {model_name.capitalize()} MSEs:")
+    print(f"    Statistic: {stat:.4f}, p-value: {p:.4f}")
+    if p > 0.05:
+        print("    Data is normally distributed. Using parametric method.")
+        method = 'parametric'
+    else:
+        print("    Data is not normally distributed. Using bootstrap method.")
+        method = 'bootstrap'
+    
+    mean_mse, mean_h, std_mse, std_h = calculate_summary_stats(mses, method=method)
     print(f"\nSummary for {model_name.capitalize()}:")
     print(f"    Mean MSE: {mean_mse:.4f} ± {mean_h:.4f}")
     print(f"    Std MSE: {std_mse:.4f} ± {std_h:.4f}")
