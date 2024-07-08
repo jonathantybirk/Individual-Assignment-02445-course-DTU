@@ -1,0 +1,1 @@
+All files except the [group assignment pdf](Group-Assignment.pdf) are related to my [individual assignment](Individual-Assignment.pdf).
